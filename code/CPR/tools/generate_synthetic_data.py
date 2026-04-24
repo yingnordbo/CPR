@@ -16,7 +16,7 @@ import imgaug.augmenters as iaa
 import numpy as np
 import torch
 
-from dataset import DATASET_INFOS, read_image
+from dataset import DATASET_INFOS, read_image, register_custom_dataset
 from libs.perlin import rand_perlin_2d_np
 from utils import fix_seeds, save_dependencies_files
 
@@ -162,11 +162,15 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=min(32, os.cpu_count()), help="num workers")
     parser.add_argument("-lp", "--log-path", type=str, default=None, help="log path")
     # data
-    parser.add_argument("--dataset-name", type=str, default="mvtec", choices=list(DATASET_INFOS.keys()), help="dataset name")
+    parser.add_argument("--dataset-name", type=str, default="mvtec", choices=list(DATASET_INFOS.keys()) + ["custom"], help="dataset name")
     parser.add_argument("--resize", type=int, default=640, help="image resize")
     parser.add_argument("--num", type=int, default=12000, help="num of synthetic samples")
     parser.add_argument("-fd", "--foreground-dir", type=str, default=None, help="foreground dir")
+    parser.add_argument("--sub-categories", type=str, nargs="+", default=None, help="sub categories")
+    parser.add_argument("--object-categories", type=str, nargs="+", default=None, help="object categories")
     args = parser.parse_args()
+    if args.dataset_name == 'custom' and args.sub_categories:
+        register_custom_dataset(None, args.sub_categories, args.object_categories)
     if args.log_path is None:
         args.log_path = f'log/synthetic_{args.dataset_name}_{args.resize}_{args.num}_{args.foreground_dir is not None}_{save_format}'
     logger.add(os.path.join(args.log_path, 'runtime.log'))

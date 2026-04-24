@@ -11,3 +11,6 @@ einops
 imgaug
 matplotlib
 tensorboard
+pandas
+pynvml
+tabulate

@@ -13,10 +13,10 @@ from tqdm import tqdm, trange
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dataset import DATASET_INFOS, CPRDataset, InfiniteSampler
+from dataset import DATASET_INFOS, CPRDataset, InfiniteSampler, register_custom_dataset
 from models import create_model, MODEL_INFOS, CPR
 from test import test
-from utils import fix_seeds, save_dependencies_files
+from utils import fix_seeds, save_dependencies_files, plot_loss_curve
 
 
 def get_args_parser():
@@ -25,7 +25,7 @@ def get_args_parser():
     parser.add_argument("--num-workers", type=int, default=8, help="num workers")
     parser.add_argument("-lp", "--log-path", type=str, default=None, help="log path")
     # data
-    parser.add_argument("-dn", "--dataset-name", type=str, default="mvtec", choices=["mvtec", "mvtec_3d", "btad"], help="dataset name")
+    parser.add_argument("-dn", "--dataset-name", type=str, default="mvtec", choices=["mvtec", "mvtec_3d", "btad", "custom"], help="dataset name")
     parser.add_argument("-ss", "--scales", type=int, nargs="+", help="multiscale", default=[4, 8])
     parser.add_argument("-kn", "--k-nearest", type=int, default=10, help="k nearest")
     parser.add_argument("-na", "--n-anomaly", type=int, default=0, help="n test anomaly samples")
@@ -33,7 +33,10 @@ def get_args_parser():
     parser.add_argument("-fd", "--foreground-dir", type=str, default=None, help="foreground dir")
     parser.add_argument("-rd", "--retrieval-dir", type=str, default='log/retrieval_mvtec_DenseNet_features.denseblock1_320', help="retrieval dir")
     parser.add_argument("-dd", "--data-dir", type=str, default='log/synthetic_mvtec_640_12000_True_jpg/', help="synthetic data dir")
-    parser.add_argument("--sub-categories", type=str, nargs="+", default=None, help="sub categories", choices=list(chain(*[x[0] for x in list(DATASET_INFOS.values())])))
+    parser.add_argument("--sub-categories", type=str, nargs="+", default=None, help="sub categories")
+    # custom dataset
+    parser.add_argument("--custom-data-dir", type=str, default=None, help="root dir for custom AOI dataset")
+    parser.add_argument("--object-categories", type=str, nargs="+", default=None, help="object categories for custom dataset (rest are textures)")
     # train
     parser.add_argument("-bs", "--batch-size", type=int, default=32)
     parser.add_argument("-lr", "--learning-rate", type=float, default=1e-3)
@@ -99,11 +102,25 @@ def main(args):
     logger.info(f'run argv: {" ".join(sys.argv)}')
     logger.info('args: \n' + pformat(vars(args)))
     save_dependencies_files(os.path.join(args.log_path, 'src'))
+    
+    # Register custom dataset if needed
+    if args.dataset_name == 'custom':
+        assert args.sub_categories is not None, "Must specify --sub-categories for custom dataset"
+        register_custom_dataset(
+            args.custom_data_dir or './data/custom',
+            args.sub_categories,
+            args.object_categories
+        )
+    
     all_categories = DATASET_INFOS[args.dataset_name][0]
     sub_categories = all_categories if args.sub_categories is None else args.sub_categories
     assert all([sub_category in all_categories for sub_category in sub_categories]), f"{sub_categories} must all be in {all_categories}"
     model_info = MODEL_INFOS[args.pretrained_model]
     layers = [model_info['layers'][model_info['scales'].index(scale)] for scale in args.scales]
+    
+    import time as _time
+    total_train_start = _time.time()
+    
     for sub_category in sub_categories:
         logger_handler_id = logger.add(os.path.join(args.log_path, sub_category, 'runtime.log'), mode='w')
         seed_worker       = fix_seeds(66)
@@ -114,20 +131,38 @@ def main(args):
         optimizer         = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=1e-2)
         loss_fn           = ContrastiveLoss(exponent=3).cuda()
         dataloader_iter   = iter(dataloader)
+        
+        cat_train_start = _time.time()
+        step_losses = []
+        
         for global_step in trange(1, args.steps+1, leave=False, desc=f'{sub_category} train'):
             batch  = [x.cuda() for x in next(dataloader_iter)]
             loss_d = train_one_step(model, batch, loss_fn)
             optimizer.zero_grad()
             loss_d['loss'].backward()
             optimizer.step()
+            
+            cur_loss = loss_d['loss'].item()
+            step_losses.append(cur_loss)
             [writer.add_scalar(f"train/{k}", v.item(), global_step) for k, v in loss_d.items()]
+            
             if global_step % args.test_per_steps == 0 or global_step == args.steps: 
                 ret = test(model, dataset.train_fns, dataset.test_fns, dataset.retrieval_result, dataset.foreground_result, args.resize, args.region_sizes, dataset.root_dir, args.k_nearest, args.T)
                 torch.save(model.state_dict(), os.path.join(args.log_path, sub_category, f'{global_step:05d}.pth'))
                 logger.info(f'[{global_step}] {sub_category} test result: {" ".join([f"{k}: {v:.4f}" for k, v in ret.items()])}')
                 [writer.add_scalar(f"test/{k}", v, global_step) for k, v in ret.items()]
                 model.train()
+        
+        cat_train_time = _time.time() - cat_train_start
+        logger.info(f'{sub_category} training time: {cat_train_time:.1f}s ({cat_train_time/60:.1f}min)')
+        
+        # Save loss curve
+        plot_loss_curve(step_losses, os.path.join(args.log_path, sub_category), title=f'{sub_category} Training Loss')
+        
         logger.remove(logger_handler_id)
+    
+    total_train_time = _time.time() - total_train_start
+    logger.info(f'Total training time: {total_train_time:.1f}s ({total_train_time/60:.1f}min)')
 
 if __name__ == "__main__":
     parser = get_args_parser()

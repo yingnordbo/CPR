@@ -14,7 +14,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dataset import DATASET_INFOS, read_image, read_mask, test_transform
+from dataset import DATASET_INFOS, read_image, read_mask, test_transform, register_custom_dataset
 from metrics import compute_ap_torch, compute_pixel_auc_torch, compute_pro_torch, compute_image_auc_torch
 from models import create_model, MODEL_INFOS, CPR
 from utils import fix_seeds
@@ -23,13 +23,15 @@ from utils import fix_seeds
 def get_args_parser():
     parser = argparse.ArgumentParser()
     # data
-    parser.add_argument("-dn", "--dataset-name", type=str, default="mvtec", choices=["mvtec", "mvtec_3d", "btad"], help="dataset name")
+    parser.add_argument("-dn", "--dataset-name", type=str, default="mvtec", choices=["mvtec", "mvtec_3d", "btad", "custom"], help="dataset name")
     parser.add_argument("-ss", "--scales", type=int, nargs="+", help="multiscale", default=[4, 8])
     parser.add_argument("-kn", "--k-nearest", type=int, default=10, help="k nearest")
     parser.add_argument("-r", "--resize", type=int, default=320, help="image resize")
     parser.add_argument("-fd", "--foreground-dir", type=str, default=None, help="foreground dir")
     parser.add_argument("-rd", "--retrieval-dir", type=str, default='log/retrieval_mvtec_DenseNet_features.denseblock1_320', help="retrieval dir")
-    parser.add_argument("--sub-categories", type=str, nargs="+", default=None, help="sub categories", choices=list(chain(*[x[0] for x in list(DATASET_INFOS.values())])))
+    parser.add_argument("--sub-categories", type=str, nargs="+", default=None, help="sub categories")
+    parser.add_argument("--custom-data-dir", type=str, default=None, help="root dir for custom dataset")
+    parser.add_argument("--object-categories", type=str, nargs="+", default=None, help="object categories for custom")
     parser.add_argument("--T", type=int, default=512)  # for image-level inference
     parser.add_argument("-rs", "--region-sizes", type=int, nargs="+", help="local retrieval region size", default=[3, 1])
     parser.add_argument("-pm", "--pretrained-model", type=str, default='DenseNet', choices=list(MODEL_INFOS.keys()), help="pretrained model")
@@ -116,6 +118,13 @@ def test(model: CPR, train_fns, test_fns, retrieval_result, foreground_result, r
     }
 
 def main(args):
+    if args.dataset_name == 'custom':
+        assert args.sub_categories is not None, "Must specify --sub-categories for custom dataset"
+        register_custom_dataset(
+            args.custom_data_dir or './data/custom',
+            args.sub_categories,
+            args.object_categories
+        )
     all_categories, object_categories, texture_categories = DATASET_INFOS[args.dataset_name]
     sub_categories = DATASET_INFOS[args.dataset_name][0] if args.sub_categories is None else args.sub_categories
     assert all([sub_category in all_categories for sub_category in sub_categories]), f"{sub_categories} must all be in {all_categories}"

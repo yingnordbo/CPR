@@ -1,0 +1,31 @@
+version: '2.3'
+
+services:
+  cpr:
+    build: .
+    image: cpr:v1
+    container_name: cpr_trainer
+    runtime: nvidia
+    user: "${UID}:${GID}"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUBLAS_WORKSPACE_CONFIG=:4096:8
+    volumes:
+      # Project root → /app
+      - /home/ying/qy/unsupervised/CPR:/app
+      # Source code
+      - /home/ying/qy/unsupervised/CPR/code:/app/code
+      # Dataset root — change the host path to wherever your data lives.
+      # CPR expects data at ./data/<dataset_name>/<category>/ relative to working_dir
+      - /home/ying/qy/unsupervised/CPR/data:/app/code/CPR/data
+      # Saved checkpoints and logs
+      - /home/ying/qy/unsupervised/CPR/result:/app/code/CPR/result
+      # Log directory (persists across container rebuilds)
+      - /home/ying/qy/unsupervised/CPR/log:/app/code/CPR/log
+    privileged: true
+    ipc: host
+    shm_size: '8g'
+    tty: true
+    stdin_open: true
+    working_dir: /app/code/CPR
+    command: /bin/bash

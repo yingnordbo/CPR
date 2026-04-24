@@ -5,6 +5,9 @@ import shutil
 import sys
 import time
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -58,3 +61,25 @@ def time_synchronized():
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     return time.time()
+
+
+def plot_loss_curve(losses, save_dir, title='Training Loss', window=100):
+    """Plot and save a training loss curve as loss_curve.png."""
+    os.makedirs(save_dir, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    steps = list(range(1, len(losses) + 1))
+    ax.plot(steps, losses, alpha=0.3, color='steelblue', linewidth=0.5, label='raw')
+    # Smoothed curve
+    if len(losses) > window:
+        smoothed = np.convolve(losses, np.ones(window)/window, mode='valid')
+        ax.plot(range(window, len(losses)+1), smoothed, color='darkblue', linewidth=1.5, label=f'smooth (w={window})')
+    ax.set_xlabel('Step')
+    ax.set_ylabel('Loss')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, linestyle='--', alpha=0.5)
+    save_path = os.path.join(save_dir, 'loss_curve.png')
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=120)
+    plt.close(fig)
+    return save_path
